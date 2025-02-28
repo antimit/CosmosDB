@@ -22,14 +22,14 @@ public class ApplicationDbContext : DbContext
         
         modelBuilder.Entity<Transportation>().ToContainer("Transportations").HasPartitionKey(t => t.TransportationId);
         modelBuilder.Entity<Delivery>().ToContainer("Deliveries").HasPartitionKey(d => d.DeliveryId);
-        modelBuilder.Entity<DeliveryItem>().ToContainer("DeliveryItems").HasPartitionKey(di => di.DeliveryItemId);
+        modelBuilder.Entity<DeliveryItem>().ToContainer("DeliveryItems").HasPartitionKey(di => di.id);
     
         // Ensure unique IDs
         modelBuilder.Entity<Customer>().HasKey(c => c.CustomerId);
         modelBuilder.Entity<Address>().HasKey(c => c.AddressId);
         modelBuilder.Entity<Driver>().HasKey(c => c.DriverId);
         modelBuilder.Entity<Product>().HasKey(c => c.ProductId);
-        modelBuilder.Entity<DeliveryItem>().HasKey(d => d.DeliveryItemId);
+        modelBuilder.Entity<DeliveryItem>().HasKey(d => d.id);
         modelBuilder.Entity<Delivery>().HasKey(d => d.DeliveryId);
         modelBuilder.Entity<Stop>().HasKey(s => s.StopId);
         modelBuilder.Entity<Transportation>().HasKey(t => t.TransportationId);

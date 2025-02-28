@@ -16,7 +16,6 @@ public class CustomerService
     private readonly CosmosClient _cosmosClient;
     
     
-
     public CustomerService(ApplicationDbContext context, CosmosClient cosmosClient)
     {
         _context = context;
@@ -94,43 +93,42 @@ public class CustomerService
     }
 
 
+    
     public async Task<ApiResponse<ConfirmationResponseDTO>> UpdateCustomerAsync(CustomerUpdateDTO customerDto)
     {
         try
         {
-            var container = _cosmosClient.GetContainer("TestApp", "Customers");
+            // Retrieve customer using EF Core, which honors the partition key and container settings.
+            var customer = await _context.Customers
+                .FirstOrDefaultAsync(c => c.CustomerId == customerDto.CustomerId);
 
-            // Try to read the customer by ID
-            try
-            {
-                var response = await container.ReadItemAsync<Customer>(customerDto.CustomerId, new PartitionKey(customerDto.CustomerId));
-                var customer = response.Resource;
-                
-                // // Check if email is already used by another customer
-                if (customer.Email != customerDto.Email && await EmailExistsAsync(customerDto.Email))
-                {
-                    return new ApiResponse<ConfirmationResponseDTO>(400, "Email is already in use.");
-                }
-                
-                // Update fields
-                customer.FirstName = customerDto.FirstName;
-                customer.LastName = customerDto.LastName;
-                customer.Email = customerDto.Email;
-                customer.PhoneNumber = customerDto.PhoneNumber;
-                
-                // Replace the document in CosmosDB
-                await container.ReplaceItemAsync(customer, customer.CustomerId, new PartitionKey(customer.CustomerId));
-
-                var confirmationMessage = new ConfirmationResponseDTO
-                {
-                    Message = $"Customer with Id {customerDto.CustomerId} updated successfully."
-                };
-                return new ApiResponse<ConfirmationResponseDTO>(200, confirmationMessage);
-            }
-            catch (CosmosException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+            if (customer == null)
             {
                 return new ApiResponse<ConfirmationResponseDTO>(404, "Customer not found.");
             }
+
+            // Check if the new email is already used by another customer
+            if (customer.Email != customerDto.Email && await EmailExistsAsync(customerDto.Email))
+            {
+                return new ApiResponse<ConfirmationResponseDTO>(400, "Email is already in use.");
+            }
+
+            // Update customer fields
+            customer.FirstName = customerDto.FirstName;
+            customer.LastName = customerDto.LastName;
+            customer.Email = customerDto.Email;
+            customer.PhoneNumber = customerDto.PhoneNumber;
+
+            // Save changes using EF Core
+            _context.Customers.Update(customer);  // Not strictly necessary since tracking handles it
+            await _context.SaveChangesAsync();
+
+            var confirmationMessage = new ConfirmationResponseDTO
+            {
+                Message = $"Customer with Id {customerDto.CustomerId} updated successfully."
+            };
+
+            return new ApiResponse<ConfirmationResponseDTO>(200, confirmationMessage);
         }
         catch (Exception ex)
         {
@@ -138,6 +136,7 @@ public class CustomerService
                 $"An unexpected error occurred while processing your request, Error: {ex.Message}");
         }
     }
+
 
 
     public async Task<ApiResponse<ConfirmationResponseDTO>> DeleteCustomerAsync(string Customerid)
@@ -179,16 +178,5 @@ public class CustomerService
         return count > 0;
     }
     
-    private async Task<bool> CustomerExistsAsync(string customer)
-    {
-        var container = _cosmosClient.GetContainer("TestApp", "Customers");
-        var query = new QueryDefinition("SELECT VALUE COUNT(1) FROM c WHERE c.CustomerId = @CustomerId")
-            .WithParameter("@CustomerId", customer);
-
-        var iterator = container.GetItemQueryIterator<int>(query);
-        var result = await iterator.ReadNextAsync();
-        var count = result.FirstOrDefault();
-
-        return count > 0;
-    }
+    
 }

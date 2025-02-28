@@ -1,8 +1,10 @@
 ﻿using AutoMapper;
+using Microsoft.Azure.Cosmos;
 using Microsoft.EntityFrameworkCore;
 using TestApp2._0.Data;
 using TestApp2._0.DTOs;
 using TestApp2._0.DTOs.DeliveryItemsDTOs;
+using TestApp2._0.Mapping;
 using TestApp2._0.Models;
 
 namespace TestApp2._0.Services;
@@ -10,56 +12,113 @@ namespace TestApp2._0.Services;
 public class DeliveryItemService
 {
     private readonly ApplicationDbContext _context;
+    private readonly CosmosClient _cosmosClient;
 
-    private readonly IMapper _mapper;
+   
 
-    public DeliveryItemService(ApplicationDbContext context, IMapper mapper)
+    public DeliveryItemService(ApplicationDbContext context, CosmosClient client)
     {
         _context = context;
-        _mapper = mapper;
+        _cosmosClient = client;
+
     }
 
-    public async Task<ApiResponse<DeliveryItemResponseDTO>> CreateDeliveryItemAsync(
-        DeliveryItemCreateDTO deliveryItemDto)
+    // public async Task<ApiResponse<DeliveryItemResponseDTO>> CreateDeliveryItemAsync(
+    //     DeliveryItemCreateDTO deliveryItemDto)
+    // {
+    //     try
+    //     {
+    //         var product = await _context.Products
+    //             .AsNoTracking()
+    //             .FirstOrDefaultAsync(p => p.ProductId == deliveryItemDto.productId);
+    //
+    //         if (product == null)
+    //         {
+    //             return new ApiResponse<DeliveryItemResponseDTO>(400, "Invalid Product ID.");
+    //         }
+    //
+    //         decimal totalCost = deliveryItemDto.OrderedCount * product.SalesUnitPrice;
+    //
+    //
+    //         var deliveryItem = deliveryItemDto.ToEntity();
+    //         // deliveryItem.Product = product;
+    //         // deliveryItem.TotalCost = totalCost;
+    //
+    //         _context.DeliveryItems.Add(deliveryItem);
+    //         await _context.SaveChangesAsync();
+    //
+    //         var response = deliveryItem.ToDTO();
+    //
+    //         return new ApiResponse<DeliveryItemResponseDTO>(200, response);
+    //     }
+    //     catch (Exception ex)
+    //     {
+    //         return new ApiResponse<DeliveryItemResponseDTO>(500, $"Error: {ex.Message}");
+    //     }
+    // }
+    public async Task<ApiResponse<DeliveryItemResponseDTO>> CreateDeliveryItemAsync(DeliveryItemCreateDTO dto)
     {
         try
         {
-            var product = await _context.Products
-                .AsNoTracking()
-                .FirstOrDefaultAsync(p => p.ProductId == deliveryItemDto.productId);
+            var container = _cosmosClient.GetContainer("TestApp", "DeliveryItems");
 
-            if (product == null)
+            // Fetch Product (this assumes Products are stored separately — you can skip this if you embed it yourself)
+            var productContainer = _cosmosClient.GetContainer("TestApp", "Products");
+            var productResponse = await productContainer.ReadItemAsync<Product>(
+                dto.productId, new PartitionKey(dto.productId)
+            );
+            var product = productResponse.Resource;
+
+            var deliveryItem = new DeliveryItem
             {
-                return new ApiResponse<DeliveryItemResponseDTO>(400, "Invalid Product ID.");
-            }
+                id = Guid.NewGuid().ToString(),
+                Name = dto.Name,
+                OrderedCount = dto.OrderedCount,
+                Product = product, // Embed product directly
+                ProductId = product.ProductId, // Still store ProductId if you want easy querying
+                TotalCost = dto.OrderedCount * product.SalesUnitPrice,
+                ItemVolume = 0,
+                ItemWeight = 0
+            };
 
-            decimal totalCost = deliveryItemDto.OrderedCount * product.SalesUnitPrice;
+            // Use Upsert (insert or update if it already exists)
+            await container.CreateItemAsync(deliveryItem, new PartitionKey(deliveryItem.id));
 
-
-            var deliveryItem = _mapper.Map<DeliveryItem>(deliveryItemDto);
-
-            _context.DeliveryItems.Add(deliveryItem);
-            await _context.SaveChangesAsync();
-
-            var response = _mapper.Map<DeliveryItemResponseDTO>(deliveryItem);
-
-            return new ApiResponse<DeliveryItemResponseDTO>(200, response);
+            var responseDto = deliveryItem.ToDTO(); // You can map it to DTO if needed
+            return new ApiResponse<DeliveryItemResponseDTO>(200, responseDto);
+        }
+        catch (CosmosException cosmosEx)
+        {
+            return new ApiResponse<DeliveryItemResponseDTO>(cosmosEx.StatusCode == System.Net.HttpStatusCode.Conflict ? 409 : 500,
+                $"Cosmos error: {cosmosEx.Message}");
         }
         catch (Exception ex)
         {
-            return new ApiResponse<DeliveryItemResponseDTO>(500, $"Error: {ex.Message}");
+            return new ApiResponse<DeliveryItemResponseDTO>(500, $"Unexpected error: {ex.Message}");
         }
     }
+
 
     public async Task<ApiResponse<List<DeliveryItemResponseDTO>>> GetAllDeliveryItemsAsync()
     {
         try
         {
-            var deliveryItems = await _context.DeliveryItems
-                .AsNoTracking()
-                .ToListAsync();
+            var container = _cosmosClient.GetContainer("TestApp", "DeliveryItems");
 
-            var responseList = _mapper.Map <List<DeliveryItemResponseDTO>>(deliveryItems);
+            var query = new QueryDefinition("SELECT * FROM c");  // Simple query to get all items
+            var iterator = container.GetItemQueryIterator<DeliveryItem>(query);
+
+            var deliveryItems = new List<DeliveryItem>();
+
+            while (iterator.HasMoreResults)
+            {
+                var resultSet = await iterator.ReadNextAsync();
+                deliveryItems.AddRange(resultSet);
+            }
+
+            var responseList = deliveryItems
+                .Select(d => d.ToDTO())
+                .ToList();
 
             return new ApiResponse<List<DeliveryItemResponseDTO>>(200, responseList);
         }
@@ -68,6 +127,7 @@ public class DeliveryItemService
             return new ApiResponse<List<DeliveryItemResponseDTO>>(500, $"Error: {ex.Message}");
         }
     }
+
 
     public async Task<ApiResponse<List<DeliveryItemResponseDTO>>> GetFilteredDeliveryItemsAsync(
         decimal? maxsalesUnitPrice, int? minItemWeight)
@@ -90,7 +150,7 @@ public class DeliveryItemService
                 .AsNoTracking()
                 .ToListAsync();
 
-            var responseList = _mapper.Map <List<DeliveryItemResponseDTO>>(deliveryItems);
+            var responseList = deliveryItems.Select(c =>c.ToDTO()).ToList();
 
             return new ApiResponse<List<DeliveryItemResponseDTO>>(200, responseList);
         }
@@ -101,11 +161,12 @@ public class DeliveryItemService
     }
 
 
-    public async Task<ApiResponse<ConfirmationResponseDTO>> DeleteDeliveryItemAsync(int deliveryItemId)
+    public async Task<ApiResponse<ConfirmationResponseDTO>> DeleteDeliveryItemAsync(string deliveryItemId)
     {
         try
         {
-            var deliveryItem = await _context.DeliveryItems.FindAsync(deliveryItemId);
+            
+            var deliveryItem = await _context.DeliveryItems.FirstOrDefaultAsync(c => c.id ==deliveryItemId);
             if (deliveryItem == null)
             {
                 return new ApiResponse<ConfirmationResponseDTO>(404, "DeliveryItem not found.");
@@ -115,7 +176,7 @@ public class DeliveryItemService
             await _context.SaveChangesAsync();
             var confirmation = new ConfirmationResponseDTO
             {
-                Message = $"DeliveryItem with Id {deliveryItem.DeliveryItemId} deleted successfully."
+                Message = $"DeliveryItem with Id {deliveryItem.id} deleted successfully."
             };
             return new ApiResponse<ConfirmationResponseDTO>(200, confirmation);
         }

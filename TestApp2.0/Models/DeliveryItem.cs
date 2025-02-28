@@ -1,5 +1,6 @@
 ﻿using System.ComponentModel.DataAnnotations;
 using System.ComponentModel.DataAnnotations.Schema;
+using System.Text.Json.Serialization;
 
 namespace TestApp2._0.Models;
 
@@ -7,11 +8,12 @@ public class DeliveryItem
 {
     [Required] 
     public string ProductId { get; set; } 
-
-    [ForeignKey("ProductId")] 
+    
     public Product Product { get; set; }
 
-    public string DeliveryItemId { get; set; } = Guid.NewGuid().ToString();
+    [JsonPropertyName("id")]  // Map DeliveryItemId to `id` in CosmosDB
+
+    public string id { get; set; } = Guid.NewGuid().ToString();
     public string Name { get; set; }
 
     public decimal SalesUnitPrice { get; set; }

@@ -45,7 +45,7 @@ public class DeliveryItemsController : ControllerBase
 
 
     [HttpDelete("DeleteDeliveryItem")]
-    public async Task<ActionResult<ApiResponse<ConfirmationResponseDTO>>> DeleteDeliveryItem(int deliveryItemId)
+    public async Task<ActionResult<ApiResponse<ConfirmationResponseDTO>>> DeleteDeliveryItem(string deliveryItemId)
     {
         var response = await _deliveryItemService.DeleteDeliveryItemAsync(deliveryItemId);
         if (response.StatusCode != 200)

@@ -41,7 +41,7 @@ public class MappingProfile : Profile
         
 
         CreateMap<DeliveryItemCreateDTO, DeliveryItem>()
-            .ForMember(dest => dest.DeliveryItemId, opt => opt.Ignore());
+            .ForMember(dest => dest.id, opt => opt.Ignore());
         
         CreateMap< DeliveryItem,DeliveryItemResponseDTO>();
         
